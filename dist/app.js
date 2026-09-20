@@ -27,13 +27,52 @@ async function load(file){
   img.onload=()=>{if(ticket!==loadId){URL.revokeObjectURL(url);return}if(img.width*img.height>40000000){URL.revokeObjectURL(url);toast('图片过大，请缩小到 4000 万像素以内');return}resetSource();source=img;sourceURL=url;$('before').src=url;$('before').hidden=false;$('beforeEmpty').hidden=true;$('originalButton').disabled=false;$('title').value=file.name.replace(/\.[^.]+$/,'');convert()};
   img.onerror=()=>{URL.revokeObjectURL(url);if(ticket===loadId)toast('无法读取这张图片，请换一张重试')};img.src=url;
 }
+// 三种取样方式，对应界面上的「处理模式」：
+//   real    取平均——照片最自然，但线条会糊
+//   pixel   逐格取中心点——图片本身就是像素图时用，不做任何混合
+//   cartoon 取每格出现最多的颜色——线稿和卡通的边缘最利落，也不会糊出灰边
+function sampleSource(w,h,mode){
+  const tmp=document.createElement('canvas'),c=tmp.getContext('2d',{willReadFrequently:true});
+  if(mode==='real'){
+    tmp.width=w;tmp.height=h;c.imageSmoothingEnabled=true;c.imageSmoothingQuality='high';
+    c.drawImage(source,0,0,w,h);return c.getImageData(0,0,w,h).data;
+  }
+  if(mode==='pixel'){
+    tmp.width=w;tmp.height=h;c.imageSmoothingEnabled=false;
+    c.drawImage(source,0,0,w,h);return c.getImageData(0,0,w,h).data;
+  }
+  // cartoon：先放到够大的中间尺寸，再逐格投票
+  const scale=Math.max(1,Math.min(10,Math.floor(4000/Math.max(w,h))));
+  const bw=w*scale,bh=h*scale;
+  tmp.width=bw;tmp.height=bh;c.imageSmoothingEnabled=true;c.imageSmoothingQuality='high';
+  c.drawImage(source,0,0,bw,bh);
+  const src=c.getImageData(0,0,bw,bh).data,out=new Uint8ClampedArray(w*h*4);
+  for(let gy=0;gy<h;gy++)for(let gx=0;gx<w;gx++){
+    const tally=new Map();let best=null,bestN=0,solid=0;
+    for(let y=gy*scale;y<(gy+1)*scale;y++)for(let x=gx*scale;x<(gx+1)*scale;x++){
+      const i=(y*bw+x)*4;
+      if(src[i+3]<128)continue;
+      solid++;
+      // 量化到 16 级再投票，否则抗锯齿会让每个像素都自成一票
+      const key=((src[i]>>4)<<8)|((src[i+1]>>4)<<4)|(src[i+2]>>4);
+      const rec=tally.get(key);
+      if(rec){rec.n++;rec.r+=src[i];rec.g+=src[i+1];rec.b+=src[i+2]}
+      else tally.set(key,{n:1,r:src[i],g:src[i+1],b:src[i+2]});
+      const cur=tally.get(key);if(cur.n>bestN){bestN=cur.n;best=cur}
+    }
+    const o=(gy*w+gx)*4;
+    if(!best||solid<scale*scale/2){out[o+3]=0;continue}
+    out[o]=Math.round(best.r/best.n);out[o+1]=Math.round(best.g/best.n);out[o+2]=Math.round(best.b/best.n);out[o+3]=255;
+  }
+  return out;
+}
 function convert(silent){
   if(!source){toast('请先上传图片；空白图纸和 CSV 可直接编辑');return}
   if(!silent&&history.length&&!confirm('重新转换会覆盖手工编辑，继续吗？'))return;
   const w=+$('width').value,h=Math.max(1,Math.round(w*source.height/source.width));
   if(h>320||w*h>51200){toast('图片比例过长，请先裁剪或减少横向格数');return}
-  const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;const c=tmp.getContext('2d');c.imageSmoothingEnabled=true;c.imageSmoothingQuality='high';c.drawImage(source,0,0,w,h);
-  const palette=chosenPalette(),cells=BeadCore.quantize(c.getImageData(0,0,w,h).data,palette,+$('limit').value,+$('merge').value);
+  const data=sampleSource(w,h,$('pixelMode').value);
+  const palette=chosenPalette(),cells=BeadCore.quantize(data,palette,+$('limit').value,+$('merge').value);
   setPattern({w,h,cells,colors:Object.fromEntries(palette.map(p=>[p.code,p.hex]))},$('title').value);toast(silent?'已重新生成':'图纸已生成');
 }
 // 排除一个颜色：把它从色板里拿掉再重新转换，和竞品的「排除」一致。
@@ -150,5 +189,5 @@ $('png').onclick=exportPNG;$('csv').onclick=()=>{if(pattern)download(new Blob(['
 fillBrush();
 $('paintColor').value=selected;$('paintColor').onchange=()=>{selected=$('paintColor').value;render()};
 $('originalButton').onclick=()=>{if(source){$('originalImage').src=source.src;$('originalDialog').showModal()}};
-$('closeOriginal').onclick=()=>$('originalDialog').close();$('searchColor').oninput=chart;$('colorFilter').oninput=()=>{if(pattern)render()};$('coords').onchange=()=>{if(pattern)render()};
+$('closeOriginal').onclick=()=>$('originalDialog').close();$('searchColor').oninput=chart;$('colorFilter').oninput=()=>{if(pattern)render()};$('pixelMode').onchange=()=>{if(source)convert()};$('coords').onchange=()=>{if(pattern)render()};
 ['calcW','calcH','pitch','need','extra'].forEach(id=>$(id).oninput=calc);fillPalettes();chart();calc();route();

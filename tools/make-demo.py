@@ -81,6 +81,41 @@ def prepare(source_path, out_path):
     print('  示例原图:', canvas.size)
 
 
+def sample_cartoon(im, gw, gh):
+    """每格取出现最多的颜色，对应站内「处理模式 = 卡通（主色）」。
+
+    和 app.js 的 sampleSource() 一致：先放大到中间尺寸，把颜色量化到 16 级再投票，
+    否则抗锯齿会让每个像素自成一票，投不出主色。
+    """
+    scale = max(1, min(10, 4000 // max(gw, gh)))
+    bw, bh = gw*scale, gh*scale
+    big = im.resize((bw, bh), Image.LANCZOS)
+    src = big.load()
+    out = bytearray(gw*gh*4)
+    for gy in range(gh):
+        for gx in range(gw):
+            tally = {}
+            solid = 0
+            for y in range(gy*scale, (gy+1)*scale):
+                for x in range(gx*scale, (gx+1)*scale):
+                    r, g, b, a = src[x, y]
+                    if a < 128:
+                        continue
+                    solid += 1
+                    key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4)
+                    rec = tally.get(key)
+                    if rec:
+                        rec[0] += 1; rec[1] += r; rec[2] += g; rec[3] += b
+                    else:
+                        tally[key] = [1, r, g, b]
+            o = (gy*gw + gx) * 4
+            if not tally or solid < scale*scale/2:
+                continue
+            n, r, g, b = max(tally.values(), key=lambda v: v[0])
+            out[o] = round(r/n); out[o+1] = round(g/n); out[o+2] = round(b/n); out[o+3] = 255
+    return bytes(out)
+
+
 def _font(px, cjk=False):
     """找字体。cjk=True 时要能画中文，否则标签会变成一排方块。"""
     latin = ('/System/Library/Fonts/Supplemental/Arial.ttf',
@@ -241,6 +276,8 @@ def main():
     ap.add_argument('--source', help='换示例图时给一张新图；不给就直接用现有的 dist/demo-before.png')
     ap.add_argument('--width', type=int, default=GRID_WIDTH)
     ap.add_argument('--limit', type=int, default=COLOR_LIMIT)
+    ap.add_argument('--mode', default='cartoon', choices=['cartoon', 'real'],
+                    help='与站内「处理模式」对应。cartoon 每格取出现最多的颜色，线稿更利落')
     ap.add_argument('--nose', default=NOSE_CODE,
                     help='转换后用画笔补黄色的色号；换图后通常要改成 none')
     args = ap.parse_args()
@@ -261,11 +298,11 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         px = os.path.join(tmp, 'pixels.bin')
         pj = os.path.join(tmp, 'pattern.json')
-        open(px, 'wb').write(im.resize((gw, gh), Image.LANCZOS).tobytes())
+        raw = sample_cartoon(im, gw, gh) if args.mode == 'cartoon' else im.resize((gw, gh), Image.LANCZOS).tobytes()
+        open(px, 'wb').write(raw)
         subprocess.run(['node', os.path.join(TOOLS, 'quantize.mjs'),
                         px, str(gw), str(args.limit), pj, DIST], check=True)
         pattern = json.load(open(pj))
-        raw = im.resize((gw, gh), Image.LANCZOS).tobytes()
 
     if args.nose and args.nose.lower() != 'none':
         painted = 0

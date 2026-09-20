@@ -92,7 +92,16 @@ function restoreColor(code){
 function renderExcluded(){
   const box=$('excludedBox'),list=$('excludedList');
   box.hidden=!excluded.size;list.replaceChildren();
-  for(const code of excluded){
+  if(!excluded.size)return;
+  // 「管理色板」一次能排掉两百多个色号，全列出来会把侧栏撑爆，只显示前几个
+  const CAP=10, all=[...excluded];
+  if(all.length>CAP){
+    const tip=document.createElement('button');tip.className='color-row';
+    tip.textContent='共排除 '+all.length+' 个色号 · 点此全部恢复';
+    tip.onclick=()=>{excluded.clear();highlight=null;if(source){history=[];convert(true)}else render()};
+    list.append(tip);
+  }
+  for(const code of all.slice(0,CAP)){
     const b=document.createElement('button');b.className='color-row';
     const hex=(chosenPaletteAll().find(p=>p.code===code)||{}).hex||'#ccc';
     const dot=document.createElement('i');dot.style.background=hex;
@@ -178,6 +187,39 @@ function applyCrop(){
   const img=new Image();
   img.onload=()=>{source=img;$('cropDialog').close();history=[];convert(true)};
   img.src=out.toDataURL();
+}
+// ---------- 管理色板 ----------
+// 沿用 excluded 这一个集合：颜色面板上的「排除」和这里的勾选是同一件事，
+// 不要再搞第二套状态，否则两边会对不上。
+let palDraft=null;
+function openPaletteDialog(){
+  palDraft=new Set(excluded);
+  renderPalList();
+  $('paletteDialog').showModal();
+}
+function renderPalList(){
+  const all=chosenPaletteAll();
+  const q=($('palFilter').value||'').trim().toLowerCase();
+  const on=all.length-palDraft.size;
+  $('paletteDialogInfo').textContent=$('palette').selectedOptions[0].textContent+' · 共 '+all.length+' 色，当前启用 '+on+' 色';
+  const box=$('palList');box.replaceChildren();
+  for(const c of all){
+    if(q&&!(c.code+' '+c.hex).toLowerCase().includes(q))continue;
+    const lab=document.createElement('label');
+    lab.className='pal-item'+(palDraft.has(c.code)?' off':'');
+    const cb=document.createElement('input');cb.type='checkbox';cb.checked=!palDraft.has(c.code);
+    cb.onchange=()=>{cb.checked?palDraft.delete(c.code):palDraft.add(c.code);renderPalList()};
+    const dot=document.createElement('i');dot.style.background=c.hex;
+    lab.append(cb,dot,document.createTextNode(c.code));
+    box.append(lab);
+  }
+}
+function applyPalette(){
+  const all=chosenPaletteAll();
+  if(palDraft.size>=all.length){toast('至少要留一个色号');return}
+  excluded=new Set(palDraft);highlight=null;
+  $('paletteDialog').close();
+  if(source){history=[];convert(true)}else if(pattern)render();
 }
 function pushHistory(){history.push(pattern.cells.slice());if(history.length>30)history.shift();$('undo').disabled=false}
 function drawBeads(target,p,cell,padding){
@@ -291,7 +333,14 @@ fillBrush();
 $('paintColor').value=selected;$('paintColor').onchange=()=>{selected=$('paintColor').value;render()};
 $('originalButton').onclick=()=>{if(source){$('originalImage').src=source.src;$('originalDialog').showModal()}};
 $('closeOriginal').onclick=()=>$('originalDialog').close();$('searchColor').oninput=chart;$('colorFilter').oninput=()=>{if(pattern)render()};$('pixelMode').onchange=()=>{if(source)convert()};$('coords').onchange=()=>{if(pattern)render()};$('viewMode').onchange=()=>{if(pattern)render()};
-$('cropBtn').onclick=openCrop;$('cropCancel').onclick=()=>$('cropDialog').close();
+$('cropBtn').onclick=openCrop;
+$('managePalette').onclick=openPaletteDialog;$('palCancel').onclick=()=>$('paletteDialog').close();
+$('palApply').onclick=applyPalette;$('palFilter').oninput=renderPalList;
+$('palAll').onclick=()=>{palDraft.clear();renderPalList()};
+$('palNone').onclick=()=>{palDraft=new Set(chosenPaletteAll().map(c=>c.code));renderPalList()};
+$('palUsed').onclick=()=>{if(!pattern){toast('还没有图纸');return}
+  const used=new Set(Object.keys(BeadCore.counts(pattern.cells)));
+  palDraft=new Set(chosenPaletteAll().map(c=>c.code).filter(c=>!used.has(c)));renderPalList()};$('cropCancel').onclick=()=>$('cropDialog').close();
 $('cropReset').onclick=()=>{cropRect=null;drawCrop()};$('cropApply').onclick=applyCrop;
 (()=>{let dragging=false,start=null;const cv=$('cropCanvas');
   cv.addEventListener('pointerdown',e=>{e.preventDefault();dragging=true;start=cropPos(e);cropRect={x:start.x,y:start.y,w:0,h:0};cv.setPointerCapture(e.pointerId);drawCrop()});

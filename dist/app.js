@@ -7,7 +7,33 @@ function toast(message){$('toast').textContent=message;$('toast').hidden=false;c
 function route(){const hash=location.hash.slice(1)||'generate';const page=hash.startsWith('guide-')?'guide':(['generate','gallery','works','tools','guide'].includes(hash)?hash:'generate');all('[data-page]').forEach(e=>e.hidden=e.dataset.page!==page);all('header nav a').forEach(a=>a.classList.toggle('active',a.hash==='#'+page));if(page==='works')renderWorks();if(hash==='faq'||hash.startsWith('guide-'))requestAnimationFrame(() => $(hash)?.scrollIntoView());else window.scrollTo(0,0)}
 window.addEventListener('hashchange',route);
 $('palette').addEventListener('change',()=>{if(excluded.size){excluded.clear();toast('已切换色板，排除列表已清空')}});
-function fillPalettes(){const sel=$('palette');const keep=sel.value;sel.replaceChildren();for(const p of PALETTES){const o=document.createElement('option');o.value=p.id;o.textContent=p.label;sel.append(o)}if(PALETTES.some(p=>p.id===keep))sel.value=keep}
+// 色板做成一排看得见的按钮。之前藏在下拉框里，用户找不到，
+// 会以为网站根本不支持这些店家色号。隐藏的 select 仍然保留，
+// 其余读 $('palette').value 的代码一律不用改。
+function fillPalettes(){
+  const sel=$('palette');const keep=sel.value;sel.replaceChildren();
+  for(const p of PALETTES){const o=document.createElement('option');o.value=p.id;o.textContent=p.label;sel.append(o)}
+  if(PALETTES.some(p=>p.id===keep))sel.value=keep;
+  renderPaletteChips();
+}
+function renderPaletteChips(){
+  const box=$('paletteChips');if(!box)return;
+  box.replaceChildren();
+  for(const p of PALETTES){
+    const b=document.createElement('button');
+    b.textContent=p.label.replace(/ ·.*$/,'').replace(/ \d+ 色$/,'');
+    b.title=p.label;
+    b.className=$('palette').value===p.id?'on':'';
+    b.onclick=()=>{
+      if($('palette').value===p.id)return;
+      $('palette').value=p.id;
+      $('palette').dispatchEvent(new Event('change'));
+      renderPaletteChips();
+      if(source){history=[];convert(true)}
+    };
+    box.append(b);
+  }
+}
 // 画笔只能用当前图纸色板里的色号。切到 COCO / Perler 等色板后若仍按 MARD 填充，
 // 刷上去的色号在 pattern.colors 里查不到，画布会直接报错。
 function fillBrush(){const sel=$('paintColor');const keep=sel.value;sel.replaceChildren();
@@ -347,4 +373,4 @@ $('cropReset').onclick=()=>{cropRect=null;drawCrop()};$('cropApply').onclick=app
   cv.addEventListener('pointermove',e=>{if(!dragging)return;const p=cropPos(e);
     cropRect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};drawCrop()});
   ['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,()=>{dragging=false}));})();
-['calcW','calcH','pitch','need','extra'].forEach(id=>$(id).oninput=calc);fillPalettes();chart();calc();route();restoreDraft();
+['calcW','calcH','pitch','need','extra'].forEach(id=>$(id).oninput=calc);fillPalettes();chart();calc();route();restoreDraft();if(typeof initLang==='function')initLang();

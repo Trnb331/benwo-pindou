@@ -2,7 +2,7 @@
 const $=id=>document.getElementById(id), all=s=>[...document.querySelectorAll(s)];
 const colorMap=Object.fromEntries(MARD.map(p=>[p.code,p.hex]));
 let pattern=null, source=null, sourceURL=null, selected='E02', history=[], currentId=null, loadId=0, drag=false, lastCell=-1, toastTimer;
-let excluded=new Set(), highlight=null;
+let excluded=new Set(), highlight=null, doneCodes=new Set(), cropRect=null;
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4000)}
 function route(){const hash=location.hash.slice(1)||'generate';const page=hash.startsWith('guide-')?'guide':(['generate','gallery','works','tools','guide'].includes(hash)?hash:'generate');all('[data-page]').forEach(e=>e.hidden=e.dataset.page!==page);all('header nav a').forEach(a=>a.classList.toggle('active',a.hash==='#'+page));if(page==='works')renderWorks();if(hash==='faq'||hash.startsWith('guide-'))requestAnimationFrame(() => $(hash)?.scrollIntoView());else window.scrollTo(0,0)}
 window.addEventListener('hashchange',route);
@@ -24,7 +24,7 @@ async function load(file){
   if(file.name.toLowerCase().endsWith('.csv')){try{const data=BeadCore.parseCSV(await file.text());if(ticket!==loadId)return;resetSource();setPattern(data,file.name.replace(/\.csv$/i,''));toast('底稿已导入，可继续编辑')}catch(e){toast(e.message)}return}
   if(!['image/png','image/jpeg','image/webp'].includes(file.type)){toast('请选择 JPG、PNG、WebP 图片或本我 CSV');return}
   const url=URL.createObjectURL(file),img=new Image();
-  img.onload=()=>{if(ticket!==loadId){URL.revokeObjectURL(url);return}if(img.width*img.height>40000000){URL.revokeObjectURL(url);toast('图片过大，请缩小到 4000 万像素以内');return}resetSource();source=img;sourceURL=url;$('before').src=url;$('before').hidden=false;$('beforeEmpty').hidden=true;$('originalButton').disabled=false;$('title').value=file.name.replace(/\.[^.]+$/,'');convert()};
+  img.onload=()=>{if(ticket!==loadId){URL.revokeObjectURL(url);return}if(img.width*img.height>40000000){URL.revokeObjectURL(url);toast('图片过大，请缩小到 4000 万像素以内');return}resetSource();source=img;sourceURL=url;$('before').src=url;$('before').hidden=false;$('beforeEmpty').hidden=true;$('originalButton').disabled=false;$('cropBtn').disabled=false;$('title').value=file.name.replace(/\.[^.]+$/,'');convert()};
   img.onerror=()=>{URL.revokeObjectURL(url);if(ticket===loadId)toast('无法读取这张图片，请换一张重试')};img.src=url;
 }
 // 三种取样方式，对应界面上的「处理模式」：
@@ -129,6 +129,56 @@ function restoreDraft(){
     $('autosave').textContent='已恢复上次的草稿';
   }catch{}
 }
+// ---------- 跟做进度 ----------
+// 按颜色记录做完了哪些，方便照着图纸一种颜色一种颜色地拼。
+function toggleDone(code){doneCodes.has(code)?doneCodes.delete(code):doneCodes.add(code);render()}
+function renderProgress(counts){
+  const box=$('progressBox');
+  const total=Object.values(counts).reduce((a,b)=>a+b,0);
+  const done=Object.entries(counts).filter(([c])=>doneCodes.has(c)).reduce((a,[,n])=>a+n,0);
+  box.hidden=!total;
+  if(!total)return;
+  const pct=Math.round(done/total*100);
+  $('progressBar').style.width=pct+'%';
+  $('progressText').textContent='已完成 '+done.toLocaleString()+' / '+total.toLocaleString()+' 颗 · '+pct+'%';
+}
+
+// ---------- 裁剪 ----------
+function openCrop(){
+  if(!source){toast('请先上传图片');return}
+  const cv=$('cropCanvas');
+  const max=900,sc=Math.min(1,max/Math.max(source.width,source.height));
+  cv.width=Math.round(source.width*sc);cv.height=Math.round(source.height*sc);
+  cropRect=null;drawCrop();
+  $('cropDialog').showModal();
+}
+function drawCrop(){
+  const cv=$('cropCanvas'),c=cv.getContext('2d');
+  c.clearRect(0,0,cv.width,cv.height);
+  c.drawImage(source,0,0,cv.width,cv.height);
+  if(!cropRect)return;
+  const {x,y,w,h}=cropRect;
+  c.fillStyle='#492b3b88';
+  c.fillRect(0,0,cv.width,y);c.fillRect(0,y+h,cv.width,cv.height-y-h);
+  c.fillRect(0,y,x,h);c.fillRect(x+w,y,cv.width-x-w,h);
+  c.strokeStyle='#bc2d65';c.lineWidth=2;c.strokeRect(x,y,w,h);
+}
+function cropPos(e){
+  const cv=$('cropCanvas'),r=cv.getBoundingClientRect();
+  return {x:(e.clientX-r.left)/r.width*cv.width, y:(e.clientY-r.top)/r.height*cv.height};
+}
+function applyCrop(){
+  const cv=$('cropCanvas');
+  if(!cropRect||cropRect.w<8||cropRect.h<8){toast('请先在图上拖一个框');return}
+  const sc=source.width/cv.width;
+  const sx=Math.round(cropRect.x*sc),sy=Math.round(cropRect.y*sc);
+  const sw=Math.round(cropRect.w*sc),sh=Math.round(cropRect.h*sc);
+  const out=document.createElement('canvas');out.width=sw;out.height=sh;
+  out.getContext('2d').drawImage(source,sx,sy,sw,sh,0,0,sw,sh);
+  const img=new Image();
+  img.onload=()=>{source=img;$('cropDialog').close();history=[];convert(true)};
+  img.src=out.toDataURL();
+}
 function pushHistory(){history.push(pattern.cells.slice());if(history.length>30)history.shift();$('undo').disabled=false}
 function drawBeads(target,p,cell,padding){
   const c=target.getContext('2d');
@@ -186,11 +236,14 @@ function render(){
     const n=document.createElement('span');n.className='cnt';n.textContent=counts[code]+' 颗';
     const x=document.createElement('button');x.className='excl';x.textContent='排除';x.title='把这个颜色从图纸里去掉';
     x.onclick=e=>{e.stopPropagation();excludeColor(code)};
-    b.append(dot,document.createTextNode(code),n,x);
+    const dn=document.createElement('button');dn.className='done';dn.textContent=doneCodes.has(code)?'撤销完成':'完成';
+    dn.onclick=e=>{e.stopPropagation();toggleDone(code)};
+    if(doneCodes.has(code))b.classList.add('finished');
+    b.append(dot,document.createTextNode(code),n,dn,x);
     b.onclick=()=>{selected=code;$('paintColor').value=code;highlight=highlight===code?null:code;render()};
     $('colorList').append(b);
   }
-  renderExcluded();
+  renderExcluded();renderProgress(counts);
   ['save','csv','png'].forEach(id=>$(id).disabled=false);$('status').textContent='画笔 '+selected+' · 透明格不计入豆数';$('after').src=thumb(pattern);$('after').hidden=false;$('afterEmpty').hidden=true;$('paintColor').value=selected;autosave();
 }
 function paint(e){
@@ -238,4 +291,11 @@ fillBrush();
 $('paintColor').value=selected;$('paintColor').onchange=()=>{selected=$('paintColor').value;render()};
 $('originalButton').onclick=()=>{if(source){$('originalImage').src=source.src;$('originalDialog').showModal()}};
 $('closeOriginal').onclick=()=>$('originalDialog').close();$('searchColor').oninput=chart;$('colorFilter').oninput=()=>{if(pattern)render()};$('pixelMode').onchange=()=>{if(source)convert()};$('coords').onchange=()=>{if(pattern)render()};$('viewMode').onchange=()=>{if(pattern)render()};
+$('cropBtn').onclick=openCrop;$('cropCancel').onclick=()=>$('cropDialog').close();
+$('cropReset').onclick=()=>{cropRect=null;drawCrop()};$('cropApply').onclick=applyCrop;
+(()=>{let dragging=false,start=null;const cv=$('cropCanvas');
+  cv.addEventListener('pointerdown',e=>{e.preventDefault();dragging=true;start=cropPos(e);cropRect={x:start.x,y:start.y,w:0,h:0};cv.setPointerCapture(e.pointerId);drawCrop()});
+  cv.addEventListener('pointermove',e=>{if(!dragging)return;const p=cropPos(e);
+    cropRect={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),w:Math.abs(p.x-start.x),h:Math.abs(p.y-start.y)};drawCrop()});
+  ['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,()=>{dragging=false}));})();
 ['calcW','calcH','pitch','need','extra'].forEach(id=>$(id).oninput=calc);fillPalettes();chart();calc();route();restoreDraft();

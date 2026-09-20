@@ -104,7 +104,52 @@ function renderExcluded(){
 }
 // 不扣排除项的完整色板，renderExcluded 要用它查被排除色号的颜色
 function chosenPaletteAll(){const e=PALETTES.find(p=>p.id===$('palette').value);return e?e.get():MARD.filter(p=>p.core)}
+const DRAFT='benwo-draft-v1';
+let draftTimer;
+// 自动保存当前图纸。只存当前浏览器，和「我的作品」一样不会上传。
+function autosave(){
+  clearTimeout(draftTimer);
+  draftTimer=setTimeout(()=>{
+    if(!pattern)return;
+    try{
+      localStorage.setItem(DRAFT,JSON.stringify({pattern,title:$('title').value,palette:$('palette').value,at:Date.now()}));
+      const t=new Date();
+      $('autosave').textContent='已自动保存 '+String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+    }catch{ $('autosave').textContent='草稿过大，未自动保存'; }
+  },800);
+}
+function restoreDraft(){
+  let raw;try{raw=localStorage.getItem(DRAFT)}catch{return}
+  if(!raw)return;
+  try{
+    const d=JSON.parse(raw);
+    if(!d?.pattern?.cells||!d.pattern.colors)return;
+    if(d.palette&&PALETTES.some(p=>p.id===d.palette))$('palette').value=d.palette;
+    setPattern(d.pattern,d.title);
+    $('autosave').textContent='已恢复上次的草稿';
+  }catch{}
+}
 function pushHistory(){history.push(pattern.cells.slice());if(history.length>30)history.shift();$('undo').disabled=false}
+function drawBeads(target,p,cell,padding){
+  const c=target.getContext('2d');
+  p.cells.forEach((code,i)=>{
+    if(!code||!p.colors[code])return;
+    const x=padding+(i%p.w)*cell,y=padding+Math.floor(i/p.w)*cell;
+    const cx=x+cell/2,cy=y+cell/2,r=cell*.46;
+    const [rr,gg,bb]=BeadCore.rgb(p.colors[code]);
+    const lighten=v=>Math.min(255,Math.round(v+(255-v)*.38));
+    const darken=v=>Math.round(v*.72);
+    const g=c.createRadialGradient(cx-r*.3,cy-r*.3,r*.15,cx,cy,r);
+    g.addColorStop(0,`rgb(${lighten(rr)},${lighten(gg)},${lighten(bb)})`);
+    g.addColorStop(.62,p.colors[code]);
+    g.addColorStop(1,`rgb(${darken(rr)},${darken(gg)},${darken(bb)})`);
+    c.fillStyle=g;c.beginPath();c.arc(cx,cy,r,0,7);c.fill();
+    // 中间的孔
+    c.globalCompositeOperation='destination-out';
+    c.beginPath();c.arc(cx,cy,r*.3,0,7);c.fill();
+    c.globalCompositeOperation='source-over';
+  });
+}
 function draw(target,p,cell,labels,grid,padding=0,keep){
   const c=target.getContext('2d');if(!keep)c.clearRect(0,0,target.width,target.height);
   p.cells.forEach((code,i)=>{if(!code||!p.colors[code])return;const x=padding+(i%p.w)*cell,y=padding+Math.floor(i/p.w)*cell;c.fillStyle=p.colors[code];c.fillRect(x,y,cell,cell);if(highlight&&code!==highlight){c.globalAlpha=.18;c.fillRect(x,y,cell,cell);c.globalAlpha=1;c.fillStyle='#fff';c.globalAlpha=.62;c.fillRect(x,y,cell,cell);c.globalAlpha=1;c.fillStyle=p.colors[code]}if(labels&&cell>=16){const [r,g,b]=BeadCore.rgb(p.colors[code]);c.fillStyle=(r*.299+g*.587+b*.114)>145?'#302431':'#fff';c.textAlign='center';c.textBaseline='middle';c.font=Math.max(7,Math.floor(cell*.3))+'px sans-serif';c.fillText(code,x+cell/2,y+cell/2)}});
@@ -125,7 +170,10 @@ function render(){
   const pad=$('coords').checked?Math.max(22,cell+6):0;
   $('canvas').width=pattern.w*cell+pad;$('canvas').height=pattern.h*cell+pad;$('canvas').hidden=false;$('empty').hidden=true;
   const cx=$('canvas').getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,$('canvas').width,$('canvas').height);
-  draw($('canvas'),pattern,cell,$('codes').checked,$('grid').checked,pad,true);
+  if($('viewMode').value==='bead'){
+    cx.fillStyle='#f6eef2';cx.fillRect(pad,pad,pattern.w*cell,pattern.h*cell);
+    drawBeads($('canvas'),pattern,cell,pad);
+  }else draw($('canvas'),pattern,cell,$('codes').checked,$('grid').checked,pad,true);
   if(pad)drawRulers($('canvas'),pattern,cell,pad);
   const counts=BeadCore.counts(pattern.cells),rows=Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);$('total').textContent=Object.values(counts).reduce((a,b)=>a+b,0).toLocaleString();$('used').textContent=rows.length;$('dimensions').textContent=pattern.w+' × '+pattern.h+' 格';$('undo').disabled=!history.length;
   const q=($('colorFilter').value||'').trim().toLowerCase();
@@ -143,7 +191,7 @@ function render(){
     $('colorList').append(b);
   }
   renderExcluded();
-  ['save','csv','png'].forEach(id=>$(id).disabled=false);$('status').textContent='画笔 '+selected+' · 透明格不计入豆数';$('after').src=thumb(pattern);$('after').hidden=false;$('afterEmpty').hidden=true;$('paintColor').value=selected;
+  ['save','csv','png'].forEach(id=>$(id).disabled=false);$('status').textContent='画笔 '+selected+' · 透明格不计入豆数';$('after').src=thumb(pattern);$('after').hidden=false;$('afterEmpty').hidden=true;$('paintColor').value=selected;autosave();
 }
 function paint(e){
   if(!pattern)return;const cv=$('canvas'),rect=cv.getBoundingClientRect();
@@ -189,5 +237,5 @@ $('png').onclick=exportPNG;$('csv').onclick=()=>{if(pattern)download(new Blob(['
 fillBrush();
 $('paintColor').value=selected;$('paintColor').onchange=()=>{selected=$('paintColor').value;render()};
 $('originalButton').onclick=()=>{if(source){$('originalImage').src=source.src;$('originalDialog').showModal()}};
-$('closeOriginal').onclick=()=>$('originalDialog').close();$('searchColor').oninput=chart;$('colorFilter').oninput=()=>{if(pattern)render()};$('pixelMode').onchange=()=>{if(source)convert()};$('coords').onchange=()=>{if(pattern)render()};
-['calcW','calcH','pitch','need','extra'].forEach(id=>$(id).oninput=calc);fillPalettes();chart();calc();route();
+$('closeOriginal').onclick=()=>$('originalDialog').close();$('searchColor').oninput=chart;$('colorFilter').oninput=()=>{if(pattern)render()};$('pixelMode').onchange=()=>{if(source)convert()};$('coords').onchange=()=>{if(pattern)render()};$('viewMode').onchange=()=>{if(pattern)render()};
+['calcW','calcH','pitch','need','extra'].forEach(id=>$(id).oninput=calc);fillPalettes();chart();calc();route();restoreDraft();

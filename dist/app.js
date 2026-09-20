@@ -5,9 +5,17 @@ let pattern=null, source=null, sourceURL=null, selected='E02', history=[], curre
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4000)}
 function route(){const hash=location.hash.slice(1)||'generate';const page=hash.startsWith('guide-')?'guide':(['generate','gallery','works','tools','guide'].includes(hash)?hash:'generate');all('[data-page]').forEach(e=>e.hidden=e.dataset.page!==page);all('header nav a').forEach(a=>a.classList.toggle('active',a.hash==='#'+page));if(page==='works')renderWorks();if(hash==='faq'||hash.startsWith('guide-'))requestAnimationFrame(() => $(hash)?.scrollIntoView());else window.scrollTo(0,0)}
 window.addEventListener('hashchange',route);
-function chosenPalette(){const mode=$('palette').value;return MARD.filter(p=>mode==='all'||mode==='core'&&p.core||mode==='pink'&&['E','H'].includes(p.code[0]))}
+function fillPalettes(){const sel=$('palette');const keep=sel.value;sel.replaceChildren();for(const p of PALETTES){const o=document.createElement('option');o.value=p.id;o.textContent=p.label;sel.append(o)}if(PALETTES.some(p=>p.id===keep))sel.value=keep}
+// 画笔只能用当前图纸色板里的色号。切到 COCO / Perler 等色板后若仍按 MARD 填充，
+// 刷上去的色号在 pattern.colors 里查不到，画布会直接报错。
+function fillBrush(){const sel=$('paintColor');const keep=sel.value;sel.replaceChildren();
+  const list=pattern?Object.keys(pattern.colors).sort():chosenPalette().map(p=>p.code);
+  const hex=pattern?pattern.colors:Object.fromEntries(chosenPalette().map(p=>[p.code,p.hex]));
+  for(const code of list){const o=document.createElement('option');o.value=code;o.textContent=code+' · '+hex[code];sel.append(o)}
+  if(list.includes(keep))sel.value=keep;else if(list.length)sel.value=list[0]}
+function chosenPalette(){const mode=$('palette').value;const entry=PALETTES.find(p=>p.id===mode);return entry?entry.get():MARD.filter(p=>p.core)}
 function resetSource(){source=null;if(sourceURL){URL.revokeObjectURL(sourceURL);sourceURL=null}$('originalButton').disabled=true;$('before').hidden=true;$('beforeEmpty').hidden=false}
-function setPattern(next,title){pattern=next;history=[];currentId=null;selected=next.cells.find(Boolean)||'E02';$('title').value=title||'我的拼豆图纸';$('width').value=Math.min(160,next.w);$('widthValue').textContent=$('width').value+' 格';render()}
+function setPattern(next,title){pattern=next;history=[];currentId=null;selected=next.cells.find(Boolean)||Object.keys(next.colors)[0]||'E02';$('title').value=title||'我的拼豆图纸';$('width').value=Math.min(300,next.w);$('widthValue').textContent=$('width').value+' 格';fillBrush();render()}
 async function load(file){
   if(!file)return;const ticket=++loadId;
   if(file.size>20*1024*1024){toast('请选择小于 20 MB 的文件');return}
@@ -23,13 +31,13 @@ function convert(){
   const w=+$('width').value,h=Math.max(1,Math.round(w*source.height/source.width));
   if(h>320||w*h>51200){toast('图片比例过长，请先裁剪或减少横向格数');return}
   const tmp=document.createElement('canvas');tmp.width=w;tmp.height=h;const c=tmp.getContext('2d');c.imageSmoothingEnabled=true;c.imageSmoothingQuality='high';c.drawImage(source,0,0,w,h);
-  const palette=chosenPalette(),cells=BeadCore.quantize(c.getImageData(0,0,w,h).data,palette,+$('limit').value);
+  const palette=chosenPalette(),cells=BeadCore.quantize(c.getImageData(0,0,w,h).data,palette,+$('limit').value,+$('merge').value);
   setPattern({w,h,cells,colors:Object.fromEntries(palette.map(p=>[p.code,p.hex]))},$('title').value);toast('图纸已生成');
 }
 function pushHistory(){history.push(pattern.cells.slice());if(history.length>30)history.shift();$('undo').disabled=false}
 function draw(target,p,cell,labels,grid,padding=0){
   const c=target.getContext('2d');c.clearRect(0,0,target.width,target.height);
-  p.cells.forEach((code,i)=>{if(!code)return;const x=padding+(i%p.w)*cell,y=padding+Math.floor(i/p.w)*cell;c.fillStyle=p.colors[code];c.fillRect(x,y,cell,cell);if(labels&&cell>=16){const [r,g,b]=BeadCore.rgb(p.colors[code]);c.fillStyle=(r*.299+g*.587+b*.114)>145?'#302431':'#fff';c.textAlign='center';c.textBaseline='middle';c.font=Math.max(7,Math.floor(cell*.3))+'px sans-serif';c.fillText(code,x+cell/2,y+cell/2)}});
+  p.cells.forEach((code,i)=>{if(!code||!p.colors[code])return;const x=padding+(i%p.w)*cell,y=padding+Math.floor(i/p.w)*cell;c.fillStyle=p.colors[code];c.fillRect(x,y,cell,cell);if(labels&&cell>=16){const [r,g,b]=BeadCore.rgb(p.colors[code]);c.fillStyle=(r*.299+g*.587+b*.114)>145?'#302431':'#fff';c.textAlign='center';c.textBaseline='middle';c.font=Math.max(7,Math.floor(cell*.3))+'px sans-serif';c.fillText(code,x+cell/2,y+cell/2)}});
   if(grid){for(let x=0;x<=p.w;x++){c.beginPath();c.strokeStyle=x%10===0?'#704458aa':'#70445833';c.lineWidth=x%10===0?1.3:.6;c.moveTo(padding+x*cell,padding);c.lineTo(padding+x*cell,padding+p.h*cell);c.stroke()}for(let y=0;y<=p.h;y++){c.beginPath();c.strokeStyle=y%10===0?'#704458aa':'#70445833';c.lineWidth=y%10===0?1.3:.6;c.moveTo(padding,padding+y*cell);c.lineTo(padding+p.w*cell,padding+y*cell);c.stroke()}}
 }
 function thumb(p){const c=document.createElement('canvas');c.width=p.w*5;c.height=p.h*5;draw(c,p,5,false,false);return c.toDataURL()}
@@ -70,14 +78,14 @@ function calc(){const w=+$('calcW').value,h=+$('calcH').value,p=+$('pitch').valu
 ['dragenter','dragover'].forEach(type=>$('stage').addEventListener(type,e=>{e.preventDefault();$('stage').classList.add('drag')}));
 ['dragleave','drop'].forEach(type=>$('stage').addEventListener(type,e=>{e.preventDefault();$('stage').classList.remove('drag')}));
 $('stage').addEventListener('drop',e=>load(e.dataTransfer.files[0]));
-['width','limit'].forEach(id=>$(id).oninput=()=>$(id+'Value').textContent=$(id).value+(id==='width'?' 格':' 色'));
+['width','limit','merge'].forEach(id=>$(id).oninput=()=>$(id+'Value').textContent=$(id).value+(id==='width'?' 格':id==='limit'?' 色':''));
 all('[data-size]').forEach(b=>b.onclick=()=>{$('width').value=b.dataset.size;$('width').oninput()});
 ['grid','codes','zoom'].forEach(id=>$(id).oninput=render);
 $('convert').onclick=convert;$('undo').onclick=()=>{if(history.length){pattern.cells=history.pop();render()}};
 $('blank').onclick=()=>{if(pattern&&!confirm('新建空白图纸？未保存的编辑将被替换。'))return;loadId++;resetSource();const w=+$('width').value;setPattern({w,h:w,cells:Array(w*w).fill(null),colors:{...colorMap}},'空白练习图纸')};
 $('png').onclick=exportPNG;$('csv').onclick=()=>{if(pattern)download(new Blob(['\uFEFF'+BeadCore.csv(pattern)],{type:'text/csv;charset=utf-8'}),name()+'.csv')};$('save').onclick=saveWork;
-for(const c of MARD){const o=document.createElement('option');o.value=c.code;o.textContent=c.code+' · '+c.family;$('paintColor').append(o)}
+fillBrush();
 $('paintColor').value=selected;$('paintColor').onchange=()=>{selected=$('paintColor').value;render()};
 $('originalButton').onclick=()=>{if(source){$('originalImage').src=source.src;$('originalDialog').showModal()}};
 $('closeOriginal').onclick=()=>$('originalDialog').close();$('searchColor').oninput=chart;
-['calcW','calcH','pitch','need','extra'].forEach(id=>$(id).oninput=calc);chart();calc();route();
+['calcW','calcH','pitch','need','extra'].forEach(id=>$(id).oninput=calc);fillPalettes();chart();calc();route();

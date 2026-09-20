@@ -3,10 +3,26 @@ const BeadCore = (() => {
   const rgb = hex => [1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
   const distance = (a,b)=> 2*(a[0]-b[0])**2+4*(a[1]-b[1])**2+3*(a[2]-b[2])**2;
   function nearest(color,palette){let best=palette[0],score=Infinity;for(const p of palette){const d=distance(color,p.rgb||rgb(p.hex));if(d<score){best=p;score=d}}return best.code}
-  function quantize(data,palette,limit){
+  // merge：0-100 的颜色合并阈值。先把肉眼难分的相近色号并到用量更大的那一个，
+  // 再按 limit 取前几名。不合并的话，一张白底图的颜色名额会被五六种几乎一样的
+  // 白色吃光，真正该留的小面积亮色反而挤不进来。
+  function mergeCodes(counts,prepared,merge){
+    const ranked=Object.keys(counts).sort((a,b)=>counts[b]-counts[a]);
+    if(!merge)return ranked;
+    const byCode=Object.fromEntries(prepared.map(p=>[p.code,p.rgb||rgb(p.hex)]));
+    const span=(merge/100)*130, limitD=9*span*span, kept=[];
+    for(const code of ranked){
+      const c=byCode[code];
+      if(!c)continue;
+      const near=kept.find(k=>distance(c,byCode[k])<limitD);
+      if(near)counts[near]+=counts[code];else kept.push(code);
+    }
+    return kept.sort((a,b)=>counts[b]-counts[a]);
+  }
+  function quantize(data,palette,limit,merge=0){
     const prepared=palette.map(p=>({...p,rgb:rgb(p.hex)})), counts={}, cache=new Map();
     for(let i=0;i<data.length;i+=4){if(data[i+3]<128)continue;const key=(data[i]<<16)|(data[i+1]<<8)|data[i+2];let code=cache.get(key);if(!code){code=nearest([data[i],data[i+1],data[i+2]],prepared);cache.set(key,code)}counts[code]=(counts[code]||0)+1}
-    const allowed=new Set(Object.keys(counts).sort((a,b)=>counts[b]-counts[a]).slice(0,limit));const reduced=prepared.filter(p=>allowed.has(p.code));cache.clear();
+    const allowed=new Set(mergeCodes(counts,prepared,merge).slice(0,limit));const reduced=prepared.filter(p=>allowed.has(p.code));cache.clear();
     const cells=[];for(let i=0;i<data.length;i+=4){if(data[i+3]<128){cells.push(null);continue}const key=(data[i]<<16)|(data[i+1]<<8)|data[i+2];if(!cache.has(key))cache.set(key,nearest([data[i],data[i+1],data[i+2]],reduced));cells.push(cache.get(key))}return cells;
   }
   function counts(cells){return cells.reduce((a,c)=>{if(c)a[c]=(a[c]||0)+1;return a},{})}
@@ -20,5 +36,5 @@ const BeadCore = (() => {
       if(code){if(!/^[A-Z]{1,3}\d{1,3}$/.test(code)||!/^#[0-9a-f]{6}$/i.test(hex))throw Error('CSV 色号或颜色无效');if(colors[code]&&colors[code]!==hex.toUpperCase())throw Error('同一色号出现不同颜色');cells[k]=code;colors[code]=hex.toUpperCase()}else if(hex)throw Error('空格不应带颜色');
     }return {w,h,cells,colors};
   }
-  return {rgb,distance,nearest,quantize,counts,csv,parseCSV};
+  return {rgb,distance,nearest,quantize,mergeCodes,counts,csv,parseCSV};
 })();

@@ -29,7 +29,13 @@ python3 tools/make-demo.py --source ~/Desktop/新图.png --nose none
 
 1. 脚本最后会打印该写进 `dist/index.html` 的那行文案和图片尺寸，**照着改**，
    否则页面上的颗数和颜色数就是假的
-2. 部署：
+2. 打缓存指纹（**改过 js/css 就必须跑**，否则老访客会拿到新 HTML 配旧 JS）：
+
+```bash
+python3 tools/stamp-assets.py
+```
+
+3. 部署：
 
 ```bash
 npx wrangler pages deploy dist --project-name=benwo-pindou --branch=main

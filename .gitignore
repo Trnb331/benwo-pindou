@@ -1,0 +1,8 @@
+# Wrangler 本地缓存（含账号信息，不应进仓库）
+.wrangler/
+
+# 临时工作目录
+work/
+outputs/
+
+.DS_Store

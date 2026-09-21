@@ -23,7 +23,6 @@ const MIXIAOWO = [{"code":"77","hex":"#FAF4C8","core":true},{"code":"2","hex":"#
 const PALETTES = [
   { id: 'core',  label: 'MARD 基础 221 色', get: () => MARD.filter(p => p.core) },
   { id: 'all',   label: 'MARD 完整 291 色', get: () => MARD },
-  { id: 'pink',  label: '本我粉色精选 · MARD 色号', get: () => MARD.filter(p => ['E','H'].includes(p.code[0])) },
   { id: 'coco', label: 'COCO 291 色 · 迷你 2.6mm', get: () => COCO },
   { id: 'manman', label: '漫漫 291 色', get: () => MANMAN },
   { id: 'panpan', label: '盼盼 291 色', get: () => PANPAN },
